@@ -10,7 +10,12 @@
 
 Production support agents fail in ways that a chat demo never shows: they skip identity checks, refund what policy forbids, give up on multi-step requests, or succeed on Monday and fail the same request on Tuesday. This project builds a support agent for a fictional bank and measures exactly those failure modes, the way agent companies evaluate their own systems: hundreds of conversations with simulated customers, each graded on what actually changed in the database.
 
-<!-- RESULTS_SUMMARY -->
+**Measured results** (open-weight Qwen3-4B on CPU as the agent, simulated customers, 67 scenarios; details in [Results](#results)):
+
+- **65.7%** of conversations solved end to end (95% CI 53.7–76.1%), graded on the final database state.
+- With the guardrail in audit mode, the same model **broke policy in 38.8% of conversations** (most often by reading or changing an account before verifying identity). With the guardrail enforcing, executed violations dropped to **0%** while the pass rate stayed in the same range (61.2% to 65.7%).
+- Reliability falls fast with repetition: on 24 scenarios run 3 times each, **pass^1 = 66.7% but pass^3 = 41.7%**.
+- A smaller model (Qwen2.5-3B) scored 40.3% overall but only **5%** on scenarios that need an action. It mostly declined to act, which looks safe on refusal scenarios (90.5%) and is why the suite reports scenario types separately.
 
 ## What it does
 
@@ -45,7 +50,41 @@ flowchart LR
 
 Each conversation gets its own copy of the database. The grader replays the scenario's expected actions on a fresh copy, then compares the two states field by field, so "the agent said it froze the card" never counts unless the card is actually frozen, and an extra, unrequested action fails the scenario.
 
-<!-- RESULTS -->
+## Results
+
+All numbers below were measured with this repository's code and are reproducible with `scripts/run_experiments.sh`. **All customers are simulated** by Qwen3-4B-Instruct-2507 (Q4_K_M GGUF, llama.cpp, 4 vCPU, no GPU). Agents are open-weight models at Q4_K_M. Raw per-conversation results are in `results/*.jsonl`; the full report, including per-category tables, is [`results/RESULTS.md`](results/RESULTS.md).
+
+| Run | Conversations | Pass rate (95% CI) | Convs with an executed policy violation | Policy-violating calls / conv | Median agent time / conv |
+|---|---|---|---|---|---|
+| Qwen3-4B, guardrail on | 67 | 65.7% (53.7–76.1%) | 0.0% | 0.45 (blocked) | 77.6 s |
+| Qwen3-4B, guardrail off (audit only) | 67 | 61.2% (49.3–73.1%) | **38.8%** | 0.81 (executed) | 74.5 s |
+| Qwen2.5-3B, guardrail on | 67 | 40.3% (28.4–50.7%) | 0.0% | 1.10 (blocked) | 50.3 s |
+
+**Pass rate by scenario type**
+
+| Type | Qwen3-4B, guard on | Qwen3-4B, guard off | Qwen2.5-3B, guard on |
+|---|---|---|---|
+| Action (something must change) | 55.0% | 60.0% | 5.0% |
+| Refusal (correct outcome is no change) | 81.0% | 57.1% | 90.5% |
+| Handoff to a human | 83.3% | 83.3% | 100.0% |
+
+**Reliability (pass^k).** Qwen3-4B with the guardrail on, 24 scenarios (one or two per category) × 3 trials, 72 conversations:
+
+| pass^1 | pass^2 | pass^3 |
+|---|---|---|
+| 66.7% | 52.8% | 41.7% |
+
+Only 10 of the 24 scenarios passed all three times; 20 of 24 passed at least once.
+
+**What the runs show**
+
+- **The guardrail removes executed violations without hurting task success.** In audit mode, 26 of 67 conversations contained at least one tool call the policy forbids (some more than one): 18 read or changed an account before identity was verified, 4 filed disputes outside the 60-day window, 3 filed unauthorized-charge disputes on cards that were still active, and 3 more broke credit-limit, tier or ownership rules. Identity-failure scenarios dropped from 100% to 33% without enforcement, because the model went ahead after failed verification.
+- **The main remaining failure is claiming an action without doing it.** "Missing write" is the most common failure for every model (14 of 23 Qwen3-4B failures): the agent tells the customer their address is updated or their card is unfrozen without calling the tool. Address-change scenarios scored 0% in all three full-suite runs, yet passed 2 of 3 times in the reliability run, a reminder of how much one trial varies. A transcript-only judge would have marked many of these as successes.
+- **Single-run accuracy overstates reliability.** The drop from pass^1 to pass^3 means that a scenario the agent solves once is solved every time well under two thirds of the time.
+- **Refusal accuracy alone rewards doing nothing.** Qwen2.5-3B has the best refusal and handoff scores and the worst action score.
+
+**Caveats.** One trial per scenario for the full-suite runs, so per-category numbers rest on 2–5 conversations each. The pass^3 trial 0 reuses the main run's conversations (same seed and settings). The simulated customer is a 4B model and causes some failures itself. Hosted frontier models were not run here; the harness supports them with one flag.
+
 
 ## Quick start
 
@@ -54,7 +93,7 @@ git clone https://github.com/juhidixit/support-agent-simulator && cd support-age
 pip install -e ".[dev]"
 make test validate replay           # unit tests, scenario checks, replay of recorded conversations
 
-# Run the evaluation with a local open-weight model (CPU is fine; ~6.5 GB of downloads)
+# Run the evaluation with a local open-weight model (CPU is fine; ~4.5 GB of downloads)
 pip install -e ".[local]"
 make models
 supportsim run --agent llamacpp:models/qwen3-4b-2507-q4km.gguf --tasks all --trials 3 \
