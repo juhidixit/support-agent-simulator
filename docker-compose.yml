@@ -1,0 +1,8 @@
+services:
+  agent:
+    build: { context: ., args: { INSTALL_LOCAL: "1" } }
+    ports: ["8000:8000"]
+    environment:
+      SUPPORTSIM_AGENT: llamacpp:/models/qwen3-4b-2507-q4km.gguf
+      SUPPORTSIM_GUARDRAIL: "on"
+    volumes: ["./models:/models:ro"]
