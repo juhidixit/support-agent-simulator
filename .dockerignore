@@ -1,0 +1,6 @@
+.git
+models
+results/traces.jsonl
+**/__pycache__
+.venv
+*.gguf

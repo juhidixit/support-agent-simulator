@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support Agent Simulator</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2330; --muted:#667085; --accent:#2f6fde;
+          --ok:#1f8a4c; --bad:#c2410c; --line:#e3e6eb; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, Segoe UI, sans-serif;
+         background:var(--bg); color:var(--ink); }
+  header { padding:14px 22px; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { font-size:17px; margin:0; } header p { margin:2px 0 0; color:var(--muted); font-size:13px; }
+  main { display:grid; grid-template-columns: 1.3fr 1fr; gap:16px; padding:16px; height:calc(100vh - 64px); }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; display:flex;
+            flex-direction:column; min-height:0; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted);
+       margin:0; padding:12px 14px; border-bottom:1px solid var(--line); }
+  #log, #tools { overflow:auto; padding:14px; flex:1; }
+  .msg { max-width:80%; padding:9px 12px; border-radius:12px; margin:0 0 10px; white-space:pre-wrap; }
+  .agent { background:#eef3fd; } .customer { background:#e9f7ef; margin-left:auto; }
+  form { display:flex; gap:8px; padding:12px; border-top:1px solid var(--line); }
+  input { flex:1; padding:10px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+  button { padding:10px 16px; border:0; border-radius:8px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  button:disabled { opacity:.5; }
+  .tool { font:12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; border-left:3px solid var(--ok);
+          padding:6px 9px; margin:0 0 8px; background:#fafbfc; word-break:break-word; }
+  .tool.blocked { border-color:var(--bad); } .tool .rule { color:var(--bad); font-weight:600; }
+  .muted { color:var(--muted); font-size:13px; }
+  @media (max-width: 800px) { main { grid-template-columns:1fr; height:auto; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Aster Bank support agent (fictional bank, synthetic data)</h1>
+  <p>Chat as a customer. The right panel shows every tool call and any guardrail block.
+     Test identities are in <code>src/supportsim/data/bank_db.json</code> (for example ava.murphy@example.com, born 1985-12-19, ZIP 80203).</p>
+</header>
+<main>
+  <section>
+    <h2>Conversation</h2>
+    <div id="log"></div>
+    <form id="f"><input id="t" autocomplete="off" placeholder="Type a message…" disabled>
+      <button id="b" disabled>Send</button></form>
+  </section>
+  <section>
+    <h2>Tool calls and guardrail</h2>
+    <div id="tools"><p class="muted">No tool calls yet.</p></div>
+  </section>
+</main>
+<script>
+const log = document.getElementById('log'), tools = document.getElementById('tools');
+const input = document.getElementById('t'), btn = document.getElementById('b');
+let sid = null;
+function add(role, text) {
+  const d = document.createElement('div'); d.className = 'msg ' + role; d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+function addTool(c) {
+  if (tools.querySelector('.muted')) tools.innerHTML = '';
+  const d = document.createElement('div'); d.className = 'tool' + (c.blocked ? ' blocked' : '');
+  d.textContent = c.name + '(' + JSON.stringify(c.arguments) + ')';
+  if (c.blocked) { const r = document.createElement('div'); r.className = 'rule';
+    r.textContent = 'BLOCKED by ' + c.rule; d.appendChild(r); }
+  else if (c.error) { const r = document.createElement('div'); r.textContent = 'error: ' + c.error; d.appendChild(r); }
+  tools.appendChild(d); tools.scrollTop = tools.scrollHeight;
+}
+async function start() {
+  const r = await fetch('/api/sessions', {method: 'POST'});
+  if (!r.ok) { add('agent', 'Service not configured: ' + (await r.json()).detail); return; }
+  const j = await r.json(); sid = j.session_id; add('agent', j.greeting);
+  input.disabled = btn.disabled = false; input.focus();
+}
+document.getElementById('f').onsubmit = async (e) => {
+  e.preventDefault(); const text = input.value.trim(); if (!text) return;
+  add('customer', text); input.value = ''; input.disabled = btn.disabled = true;
+  const r = await fetch(`/api/sessions/${sid}/messages`, {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text})});
+  const j = await r.json();
+  if (!r.ok) { add('agent', 'Error: ' + j.detail); return; }
+  j.tool_calls.forEach(addTool); add('agent', j.reply);
+  if (!j.ended) { input.disabled = btn.disabled = false; input.focus(); }
+};
+start();
+</script>
+</body>
+</html>
